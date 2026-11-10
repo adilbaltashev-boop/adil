@@ -14,19 +14,20 @@ import json
 
 from .brain import Brain
 
-_brain: Brain | None = None
+
+async def _decide(text: str, where: str, context: str):
+    # Новый клиент на каждый пример: asyncio.run создаёт свой event loop, а пул соединений к нему привязан.
+    return await Brain().decide(text, where, context)
 
 
 def run(case_input) -> dict:
-    global _brain
-    _brain = _brain or Brain()
     if isinstance(case_input, str) and case_input.startswith("{"):
         case_input = json.loads(case_input)
     if isinstance(case_input, dict):
         text, where, context = case_input["text"], case_input.get("where", "comment"), case_input.get("context", "")
     else:
         text, where, context = case_input, "comment", ""
-    d = asyncio.run(_brain.decide(text, where, context))
+    d = asyncio.run(_decide(text, where, context))
     calls = [] if d.action == "reply" else [{"name": "handoff_to_human" if d.action == "handoff" else "ignore",
                                              "args": {"reason": d.reason}}]
     return {"text": d.text, "tool_calls": calls, "reason": d.reason}

@@ -85,6 +85,8 @@ def run_cases(agent: Agent, cases: list[dict], log_path: Path | None = None) -> 
 
 def load_agent(spec: str) -> Agent:
     module, _, func = spec.partition(":")
+    if "" not in sys.path and str(Path.cwd()) not in sys.path:
+        sys.path.insert(0, str(Path.cwd()))  # агент импортируется из папки, откуда запущен прогон
     return getattr(importlib.import_module(module), func or "run")
 
 

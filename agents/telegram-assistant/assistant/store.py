@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS drafts (
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
     seconds REAL DEFAULT 0,
-    decided_at REAL
+    decided_at REAL,
+    UNIQUE (source, chat_id, message_id)   -- повтор апдейта после перезапуска не создаст второй ответ
 );
 CREATE TABLE IF NOT EXISTS owner_state (
     key TEXT PRIMARY KEY,
@@ -62,15 +63,24 @@ class Store:
 
     def add(self, *, source, chat_id, message_id, input, action, status, business_connection_id=None,
             author=None, context=None, draft_text=None, reason=None, input_tokens=0, output_tokens=0,
-            seconds=0.0) -> int:
+            seconds=0.0) -> int | None:
+        """None — такое сообщение уже обрабатывали."""
         cur = self.db.execute(
-            "INSERT INTO drafts (created_at, source, chat_id, message_id, business_connection_id, author, input,"
+            "INSERT OR IGNORE INTO drafts (created_at, source, chat_id, message_id, business_connection_id, author, input,"
             " context, action, draft_text, reason, status, input_tokens, output_tokens, seconds)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (time.time(), source, chat_id, message_id, business_connection_id, author, input, context, action,
              draft_text, reason, status, input_tokens, output_tokens, seconds))
         self.db.commit()
-        return cur.lastrowid
+        return cur.lastrowid if cur.rowcount == 1 else None
+
+    def exists(self, source: str, chat_id: int, message_id: int) -> bool:
+        return self.db.execute("SELECT 1 FROM drafts WHERE source = ? AND chat_id = ? AND message_id = ?",
+                               (source, chat_id, message_id)).fetchone() is not None
+
+    def recent_count(self, source: str, chat_id: int, seconds: float) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM drafts WHERE source = ? AND chat_id = ? AND created_at >= ?",
+                               (source, chat_id, time.time() - seconds)).fetchone()[0]
 
     def get(self, draft_id: int) -> Draft | None:
         row = self.db.execute(

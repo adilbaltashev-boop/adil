@@ -20,7 +20,7 @@ DECISION_SCHEMA = {
     "type": "object",
     "properties": {
         "action": {"type": "string", "enum": ["reply", "handoff", "ignore"]},
-        "text": {"type": "string", "description": "Ответ человеку. Пусто, если action != reply."},
+        "text": {"type": "string", "description": "Ответ человеку, до 1000 символов. Пусто, если action != reply."},
         "reason": {"type": "string", "description": "Коротко, почему такое решение — для владельца."},
     },
     "required": ["action", "text", "reason"],
@@ -73,6 +73,8 @@ def parse_decision(response) -> Decision:
     raw = next((b.text for b in response.content if b.type == "text"), "")
     try:
         data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise TypeError("not an object")
         action = data["action"] if data.get("action") in ("reply", "handoff", "ignore") else "handoff"
         text = (data.get("text") or "").strip()
         if action == "reply" and not text:

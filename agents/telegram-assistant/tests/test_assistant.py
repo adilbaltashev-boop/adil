@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 from assistant import brain as brain_mod  # noqa: E402
 from assistant.core import Assistant, label  # noqa: E402
 from assistant.store import Store  # noqa: E402
-from scripts.import_export import extract_pairs, plain_text  # noqa: E402
+from scripts.import_export import anonymize, extract_pairs, plain_text  # noqa: E402
 
 
 def fake_response(payload=None, stop_reason="end_turn", raw=None):
@@ -78,7 +78,7 @@ class ParseDecision(unittest.TestCase):
         self.assertEqual(run(b.decide("  ", "comment")).action, "ignore")
 
 
-class AssistantFlow(unittest.TestCase):
+class FlowBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.store = Store(Path(self.tmp.name) / "t.db")
@@ -97,6 +97,8 @@ class AssistantFlow(unittest.TestCase):
         args.update(kw)
         return run(a.on_incoming(**args))
 
+
+class AssistantFlow(FlowBase):
     def test_draft_goes_to_owner_not_to_public(self):
         a = self.make()
         draft_id = self.incoming(a)
@@ -157,12 +159,69 @@ class AssistantFlow(unittest.TestCase):
     def test_report(self):
         a = self.make()
         run(a.approve(self.incoming(a)))
-        d2 = self.incoming(a)
+        d2 = self.incoming(a, message_id=6)
         a.start_edit(d2)
         run(a.owner_text("правка"))
         report = a.report()
         self.assertIn("отправлено без правок: 1", report)
         self.assertIn("Точность черновиков (отправлено без правок): 50%", report)
+
+
+class Safety(FlowBase):
+    def test_duplicate_update_is_processed_once(self):
+        a = self.make()
+        self.assertIsNotNone(self.incoming(a))
+        self.assertIsNone(self.incoming(a))
+        self.assertEqual(len(self.sender.owner), 1)
+
+    def test_rate_limit_per_chat(self):
+        a = self.make(auto=True)
+        a.per_chat_hourly_limit = 2
+        for mid in range(1, 6):
+            self.incoming(a, message_id=mid)
+        self.assertEqual(len(self.sender.replies), 2)
+        self.assertEqual(len(a.brain.calls), 2)  # после лимита модель не вызывается
+
+    def test_approve_clears_pending_edit(self):
+        a = self.make()
+        draft_id = self.incoming(a)
+        a.start_edit(draft_id)
+        run(a.approve(draft_id))
+        self.assertIsNone(run(a.owner_text("это не правка")))
+
+    def test_owner_notify_failure_marks_failed(self):
+        class OwnerDown(FakeSender):
+            async def to_owner(self, text, draft_id=None):
+                raise RuntimeError("bot was blocked by the user")
+        a = self.make(sender=OwnerDown())
+        draft_id = self.incoming(a)
+        self.assertEqual(self.store.get(draft_id).status, "failed")
+
+
+class CommentFilter(unittest.TestCase):
+    def msg(self, parent):
+        return SimpleNamespace(reply_to_message=parent, bot=SimpleNamespace(id=999))
+
+    def test_filters(self):
+        from assistant.bot import is_comment_for_bot
+        post = SimpleNamespace(is_automatic_forward=True, from_user=None)
+        to_bot = SimpleNamespace(is_automatic_forward=None, from_user=SimpleNamespace(id=999))
+        to_owner = SimpleNamespace(is_automatic_forward=None, from_user=SimpleNamespace(id=1))
+        to_person = SimpleNamespace(is_automatic_forward=None, from_user=SimpleNamespace(id=42))
+        self.assertTrue(is_comment_for_bot(self.msg(post), 1))
+        self.assertTrue(is_comment_for_bot(self.msg(to_bot), 1))
+        self.assertFalse(is_comment_for_bot(self.msg(to_owner), 1))
+        self.assertFalse(is_comment_for_bot(self.msg(to_person), 1))
+        self.assertFalse(is_comment_for_bot(self.msg(None), 1))
+
+    def test_only_owner_business_connection(self):
+        from assistant.bot import OwnerConnections
+        c = OwnerConnections(bot=None, owner_id=1)
+        c.remember(SimpleNamespace(id="mine", user=SimpleNamespace(id=1), is_enabled=True))
+        c.remember(SimpleNamespace(id="stranger", user=SimpleNamespace(id=2), is_enabled=True))
+        self.assertTrue(run(c.is_owner("mine")))
+        self.assertFalse(run(c.is_owner("stranger")))
+        self.assertFalse(run(c.is_owner(None)))
 
 
 class ImportExport(unittest.TestCase):
@@ -178,7 +237,19 @@ class ImportExport(unittest.TestCase):
             {"id": 5, "type": "service", "from_id": "user9"},
         ]}
         self.assertEqual(extract_pairs(export, owner_id=1),
-                         [{"id": "tg-1", "input": "Сколько стоит?", "reference": "10 000 ₸"}])
+                         [{"id": "tg-1-2", "input": "Сколько стоит?", "reference": "10 000 ₸"}])
+
+    def test_channel_post_is_not_a_question(self):
+        export = {"messages": [
+            {"id": 1, "type": "message", "from_id": "channel55", "text": "Новый пост"},
+            {"id": 2, "type": "message", "from_id": "user1", "text": "дополню", "reply_to_message_id": 1},
+        ]}
+        self.assertEqual(extract_pairs(export, owner_id=1), [])
+
+    def test_anonymize(self):
+        out = anonymize("Пишите @ivan_petrov или +7 701 123 45 67, mail a.b@mail.kz, t.me/somechat")
+        for leaked in ("ivan_petrov", "701", "a.b@mail.kz", "somechat"):
+            self.assertNotIn(leaked, out)
 
     def test_safety_cases_are_valid_json(self):
         for line in (ROOT / "evals" / "cases.jsonl").read_text(encoding="utf-8").splitlines():
