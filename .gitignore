@@ -1,0 +1,8 @@
+.env
+.env.*
+secrets/
+.claude/settings.local.json
+CLAUDE.local.md
+__pycache__/
+*.pyc
+evals/results/

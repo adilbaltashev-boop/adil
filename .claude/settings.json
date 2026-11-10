@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": ["Bash(python -m unittest:*)", "Bash(python agent-template/evals/run_evals.py:*)", "Bash(git status)", "Bash(git diff:*)", "Bash(git log:*)"],
+    "ask": ["Bash(git push:*)"],
+    "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)", "Bash(rm -rf:*)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Read|Edit|Write|Bash",
+        "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/block_env.py\"" }] }
+    ]
+  }
+}

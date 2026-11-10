@@ -1,0 +1,14 @@
+[
+  {
+    "name": "handoff_to_human",
+    "description": "Передаёт диалог живому администратору. Вызывай при жалобе, возврате денег, повторном недовольстве, вопросе вне услуг или просьбе позвать человека. После вызова скажи клиенту, что администратор ответит.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "reason": {"type": "string", "enum": ["complaint", "refund", "unhappy", "out_of_scope", "asked_for_human"]},
+        "summary": {"type": "string", "description": "1–2 предложения: что хочет клиент"}
+      },
+      "required": ["reason", "summary"]
+    }
+  }
+]
