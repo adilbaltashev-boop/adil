@@ -6,3 +6,6 @@ CLAUDE.local.md
 __pycache__/
 *.pyc
 evals/results/
+# Переписка людей и база бота — приватные данные, не в git
+agents/*/data/
+agents/*/evals/cases_from_export.jsonl
