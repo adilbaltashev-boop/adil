@@ -77,12 +77,19 @@ button.danger{color:var(--bad)}
 pre.out{font-family:var(--font-mono);font-size:13px;background:var(--sunken);border:1px solid var(--line);border-radius:6px;padding:10px;overflow:auto;max-height:340px;white-space:pre-wrap;word-break:break-word;margin:8px 0 0}
 .status{display:inline-block;font-family:var(--font-mono);font-weight:500;padding:2px 8px;border-radius:999px;font-size:13px;border:1px solid currentColor}
 .s2{color:var(--ok)} .s4{color:var(--warn)} .s5{color:var(--bad)}
-.quests{list-style:none;padding:0;margin:8px 0 0;display:grid;gap:6px}
+.quests{list-style:none;padding:0;margin:8px 0 0;display:grid;gap:6px;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));align-items:start}
+.quests>li{min-width:0}
 .quests li{display:flex;gap:10px;align-items:flex-start;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
 .quests li .box{flex:none;width:18px;height:18px;border-radius:4px;border:1.5px solid var(--line);margin-top:2px;display:grid;place-items:center;font-size:12px;color:var(--accent-ink)}
 .quests li.done{border-color:var(--ok)}
 .quests li.done .box{background:var(--ok);border-color:var(--ok)}
 .quests li small{display:block;color:var(--muted);font-size:12.5px}
+.quests li .qt{font-weight:500}
+.quests li.lvl{grid-column:1/-1;border:0;background:none;padding:8px 0 0;font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.quests details{margin-top:4px;font-size:13px}
+.quests summary{cursor:pointer;color:var(--accent);width:max-content}
+.quests details p{margin:4px 0 0;color:var(--muted)}
+.quests .learn{margin:6px 0 0;font-size:13px;color:var(--fg);border-left:2px solid var(--ok);padding-left:8px}
 /* Kafka tapes */
 .partition{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center;margin-top:8px}
 .plabel{font-family:var(--font-mono);font-size:12px;color:var(--muted)}
@@ -182,7 +189,9 @@ footer{padding-block:28px;color:var(--muted);font-size:13px;border-top:1px solid
           <tr><td class="m">401 Unauthorized</td><td>не представились: нет токена или он неверный</td><td>при включённой авторизации</td></tr>
           <tr><td class="m">404 Not Found</td><td>такого ресурса нет</td><td>GET /orders/999</td></tr>
           <tr><td class="m">405 Method Not Allowed</td><td>ресурс есть, метод не поддержан</td><td>DELETE /orders (на коллекцию)</td></tr>
+          <tr><td class="m">304 Not Modified</td><td>у клиента актуальная версия, тела нет</td><td>GET с If-None-Match = текущий ETag</td></tr>
           <tr><td class="m">409 Conflict</td><td>конфликт с текущим состоянием</td><td>отмена уже оплаченного заказа</td></tr>
+          <tr><td class="m">412 Precondition Failed</td><td>условие в If-Match не выполнено</td><td>PATCH со старым ETag</td></tr>
         </tbody>
       </table>
     </div>
@@ -221,14 +230,19 @@ footer{padding-block:28px;color:var(--muted);font-size:13px;border-top:1px solid
           <button data-preset="put">PUT замена</button>
           <button data-preset="del">DELETE</button>
           <button data-preset="idem">POST + Idempotency-Key</button>
+          <button data-preset="page">GET страница</button>
+          <button data-preset="etag">GET + If-None-Match</button>
+          <button data-preset="ifm">PATCH + If-Match</button>
         </div>
       </div>
       <div class="panel">
         <h3>Ответ <span id="statusPill"></span></h3>
         <pre class="out" id="resp">Отправьте запрос — здесь появятся статус, заголовки и тело.</pre>
-        <h3 style="margin-top:16px">Задания</h3>
-        <ul class="quests" id="restQuests"></ul>
       </div>
+    </div>
+    <div class="panel" style="margin-top:20px">
+      <h3>Задания</h3>
+      <ul class="quests" id="restQuests"></ul>
     </div>
   </div>
 </section>
@@ -281,6 +295,7 @@ footer{padding-block:28px;color:var(--muted);font-size:13px;border-top:1px solid
     <div class="panel" style="margin-top:20px">
       <h3>Задания</h3>
       <ul class="quests" id="kafkaQuests"></ul>
+      <div class="row" style="margin-top:12px"><button id="resetProgress" class="danger">Сбросить прогресс заданий</button><span class="note" id="resetNote"></span></div>
     </div>
   </div>
 </section>
@@ -333,38 +348,59 @@ const store = {
 
 /* ================= QUESTS ================= */
 const done = new Set(store.get("rk-done", []));
+// [id, level, title, goal, hint, learn]
 const QUESTS = {
   rest: [
-    ["r-list","Получите список заказов","GET /orders → 200"],
-    ["r-filter","Отфильтруйте заказы по статусу","query-параметр ?status=…"],
-    ["r-create","Создайте заказ","POST → 201 и заголовок Location"],
-    ["r-400","Получите ошибку валидации","400: например, qty = 0"],
-    ["r-404","Запросите несуществующий заказ","404"],
-    ["r-405","Вызовите метод, который ресурс не поддерживает","405 и заголовок Allow"],
-    ["r-patch","Поменяйте только статус заказа","PATCH → 200"],
-    ["r-409","Получите конфликт","409: отмена оплаченного заказа (status: cancelled)"],
-    ["r-del","Удалите заказ, затем удалите его ещё раз","204, затем 404"],
-    ["r-idem","Повторите POST с тем же Idempotency-Key","второй ответ без нового заказа"],
-    ["r-401","Включите авторизацию и получите 401","запрос без Authorization"]
+    ["r-list",1,"Получите список заказов","GET /orders → 200","Метод GET, путь /orders, тело не нужно.","Коллекция — тоже ресурс. GET безопасен: сколько ни повторяй, данные не меняются."],
+    ["r-filter",1,"Отфильтруйте заказы по статусу","/orders?status=paid","Фильтры передают query-параметрами, а не телом: у GET тела нет.","Query-параметры уточняют выборку из той же коллекции, новый URL ресурса для этого не нужен."],
+    ["r-create",1,"Создайте заказ","POST /orders → 201 + Location","Тело: { \"item\": \"Стол\", \"qty\": 1 }.","201 + Location сообщают клиенту адрес нового ресурса. Id назначает сервер, а не клиент."],
+    ["r-400",1,"Получите ошибку валидации","400 с полем details","Поставьте qty = 0 или уберите item.","Хороший API объясняет, какое поле не так и почему, а не просто отвечает «Bad Request»."],
+    ["r-json",1,"Отправьте сломанный JSON","400 «тело — не валидный JSON»","Удалите закрывающую скобку в теле POST.","Синтаксическая ошибка разбора и нарушение бизнес-правил — разные 400, и сообщать о них стоит по-разному."],
+    ["r-404",1,"Запросите несуществующий заказ","GET /orders/999 → 404","Путь /orders/999.","404 — «такого ресурса нет». Не путайте с 405, где ресурс есть, но метод не тот."],
+    ["r-405",1,"Вызовите неподдерживаемый метод","405 + заголовок Allow","DELETE на /orders (на всю коллекцию).","Заголовок Allow подсказывает клиенту, какие методы допустимы. Это часть контракта HTTP."],
+    ["r-patch",1,"Поменяйте только статус","PATCH /orders/2 → 200","Тело: { \"status\": \"paid\" }.","PATCH меняет только переданные поля, остальные остаются как были."],
+    ["r-del",1,"Удалите заказ, затем удалите его ещё раз","204, затем 404","DELETE /orders/3 дважды.","DELETE идемпотентен по состоянию: после первого вызова заказа нет, второй ничего не меняет. Код ответа при этом может отличаться."],
+    ["r-401",1,"Получите 401","включите авторизацию и отправьте запрос без токена","Галочка «требовать токен», затем уберите строку Authorization.","401 — «кто вы?», 403 — «знаю, кто вы, но нельзя». Токен идёт в заголовке, а не в URL: URL попадают в логи."],
+    ["r-put",2,"Сломайте PUT, передав одно поле","PUT /orders/2 с телом { \"status\": \"paid\" } → 400","PUT — полная замена, поэтому item и qty обязательны.","В этом главное отличие PUT от PATCH: PUT присылает ресурс целиком, а PATCH — только изменения."],
+    ["r-409",2,"Получите конфликт","409 при отмене оплаченного заказа","PATCH /orders/1 с { \"status\": \"cancelled\" }: заказ 1 уже оплачен.","409 означает, что запрос корректен, но противоречит текущему состоянию ресурса. Здесь работает бизнес-правило, а не валидация."],
+    ["r-idem",2,"Защититесь от дубля при ретрае","повторите POST с тем же Idempotency-Key","Пресет «POST + Idempotency-Key», нажмите «Отправить» дважды.","Сервер запоминает ключ и на повтор возвращает сохранённый ответ. Так платёжные API защищаются от двойных списаний."],
+    ["r-page",2,"Получите страницу списка","/orders?limit=2&offset=0 → поле next","Затем перейдите по ссылке из next.","Без пагинации большая коллекция кладёт и сервер, и клиент. Ссылка next избавляет клиента от расчёта смещений."],
+    ["r-304",2,"Получите 304 Not Modified","GET с If-None-Match","Сделайте GET /orders/2, скопируйте ETag и отправьте его в заголовке If-None-Match.","ETag — отпечаток версии ресурса. Если версия не изменилась, сервер отвечает 304 без тела и экономит трафик."],
+    ["r-412",2,"Поймайте чужое изменение","PATCH с устаревшим If-Match → 412","Возьмите ETag, измените заказ, затем пошлите PATCH со старым ETag в If-Match.","Это оптимистичная блокировка: правка не затрёт чужую, сделанную после того, как вы прочитали ресурс."]
   ],
   kafka: [
-    ["k-key","Отправьте 3 сообщения с одним ключом","все попадут в одну партицию, порядок сохранится"],
-    ["k-idle","Сделайте консьюмеров в группе больше, чем партиций","лишний консьюмер простаивает"],
-    ["k-lag","Накопите лаг, а затем дочитайте его до нуля","lag = конец журнала − закоммиченный offset"],
-    ["k-dup","Получите повторную доставку","ручной коммит → poll → «уронить» консьюмера → poll"],
-    ["k-fanout","Прочитайте одно сообщение двумя группами","у каждой группы свои offset’ы"],
-    ["k-replay","Перемотайте группу в начало","reset offsets → сообщения читаются заново"],
-    ["k-bridge","Создайте заказ через REST и найдите событие в топике","POST /orders в песочнице"]
+    ["k-key",1,"Отправьте 3 сообщения с одним ключом","все окажутся в одной партиции","Ключ order-7, трижды «Отправить».","Одинаковый ключ всегда попадает в одну партицию, поэтому события одного заказа идут по порядку."],
+    ["k-rr",1,"Отправьте 3 сообщения без ключа","они разойдутся по разным партициям","Очистите поле «Ключ».","Без ключа нагрузка распределяется равномерно, но порядок между сообщениями не гарантирован."],
+    ["k-idle",1,"Сделайте консьюмеров больше, чем партиций","лишний консьюмер простаивает","В группе billing нажимайте «+ консьюмер».","Партиция достаётся только одному консьюмеру группы, поэтому параллелизм ограничен числом партиций."],
+    ["k-lag",1,"Накопите лаг ≥ 3 и дочитайте до нуля","lag = конец партиции − commit","Отправьте несколько сообщений, затем poll.","Лаг — главная метрика здоровья консьюмера. Растущий лаг значит, что группа не успевает."],
+    ["k-fanout",1,"Прочитайте одно сообщение двумя группами","billing и notifications","poll в обеих группах.","У каждой группы свои offset’ы: одно событие независимо получают все подписанные сервисы."],
+    ["k-bridge",1,"Создайте заказ через REST","событие появится в топике","POST /orders в песочнице выше.","REST-запрос стал событием: order-service не знает, кто его прочитает."],
+    ["k-dup",2,"Получите повторную доставку","ручной коммит → poll → уронить → poll","В billing снимите автокоммит, нажмите poll, «уронить консьюмера», снова poll.","Это at-least-once: обработка без коммита повторится. Значит, обработчик должен быть идемпотентным."],
+    ["k-safe",2,"Уроните консьюмера без повторов","ручной режим: poll → commit → уронить","То же, что в прошлом задании, но перед падением нажмите commit.","Коммит после обработки закрывает окно повторов. Но если упасть между обработкой и коммитом, повтор всё равно будет."],
+    ["k-replay",2,"Перемотайте группу в начало","reset offsets → чтение заново","Кнопка reset offsets, затем poll.","Kafka — журнал: данные можно переиграть, например после исправления бага в консьюмере."],
+    ["k-nocons",2,"Оставьте группу без консьюмеров","лаг ≥ 5 при нуле консьюмеров","Уроните всех консьюмеров notifications и отправьте 5 сообщений.","Сообщения не теряются, пока сервис лежит, — они ждут в журнале в пределах retention."],
+    ["k-repart",2,"Отправьте ключ order-1 при разном числе партиций","его партиция изменится","Отправьте order-1, смените число партиций и отправьте снова.","hash % N зависит от N. Поэтому увеличение числа партиций у живого топика ломает порядок по ключам."],
+    ["k-order",2,"Проведите заказ через весь жизненный цикл","POST → PATCH → DELETE одного заказа","Создайте заказ, поменяйте его статус и удалите. Найдите его события в топике.","Все три события лежат в одной партиции строго по порядку, потому что ключ — id заказа."]
   ]
 };
 function renderQuests(){
   for (const [area, list] of Object.entries(QUESTS)){
     const ul = $(area === "rest" ? "#restQuests" : "#kafkaQuests");
     ul.replaceChildren();
-    for (const [id, title, hint] of list){
-      const li = el("li", done.has(id) ? "done" : "");
-      const box = el("span", "box", done.has(id) ? "✓" : "");
-      const t = el("div"); t.append(el("span", null, title), el("small", null, hint));
+    let lvl = 0;
+    for (const [id, level, title, goal, hint, learn] of list){
+      if (level !== lvl){
+        lvl = level;
+        const n = list.filter(q => q[1] === level), d = n.filter(q => done.has(q[0])).length;
+        ul.append(el("li", "lvl", (level === 1 ? "Основы" : "Глубже") + ` · ${d}/${n.length}`));
+      }
+      const ok = done.has(id);
+      const li = el("li", ok ? "done" : "");
+      const box = el("span", "box", ok ? "✓" : "");
+      const t = el("div");
+      t.append(el("span", "qt", title), el("small", null, goal));
+      if (ok) t.append(el("p", "learn", learn));
+      else { const det = el("details"); det.append(el("summary", null, "Подсказка"), el("p", null, hint)); t.append(det); }
       li.append(box, t); ul.append(li);
     }
   }
@@ -378,7 +414,8 @@ const db = { seq: 3, orders: new Map([
   [1, {id:1, item:"Ноутбук", qty:1, status:"paid"}],
   [2, {id:2, item:"Мышь", qty:2, status:"new"}],
   [3, {id:3, item:"Монитор", qty:1, status:"shipped"}]
-]), idem: new Map() };
+]), idem: new Map(), ver: new Map() };
+const etag = id => `"${id}-v${db.ver.get(id) || 1}"`;
 const STATUSES = ["new","paid","shipped","cancelled"];
 
 function res(status, body, headers){ return { status, body, headers: Object.assign({"Content-Type":"application/json"}, headers||{}) }; }
@@ -403,7 +440,7 @@ function handle(method, rawPath, headers, bodyText){
   const parts = url.pathname.replace(/\/+$/,"").split("/").filter(Boolean);
   let body = null;
   if (["POST","PUT","PATCH"].includes(method)){
-    try { body = JSON.parse(bodyText || ""); } catch(e){ return err(400, "тело — не валидный JSON"); }
+    try { body = JSON.parse(bodyText || ""); } catch(e){ complete("r-json"); return err(400, "тело — не валидный JSON"); }
     if (typeof body !== "object" || body === null || Array.isArray(body)) return err(400, "тело должно быть JSON-объектом");
   }
   if (parts[0] !== "orders" || parts.length > 2) return err(404, `маршрут ${url.pathname} не найден`);
@@ -414,6 +451,14 @@ function handle(method, rawPath, headers, bodyText){
       const st = url.searchParams.get("status");
       if (st) list = list.filter(o => o.status === st);
       complete(st ? "r-filter" : "r-list");
+      if (url.searchParams.has("limit")){
+        const limit = Number(url.searchParams.get("limit")), offset = Number(url.searchParams.get("offset") || 0);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !Number.isInteger(offset) || offset < 0){ complete("r-400"); return err(400, "limit: 1–50, offset: целое ≥ 0"); }
+        const page = list.slice(offset, offset + limit);
+        const q = n => { const u = new URLSearchParams(url.searchParams); u.set("offset", n); return "/orders?" + u.toString(); };
+        complete("r-page");
+        return res(200, {items: page, total: list.length, limit, offset, next: offset + limit < list.length ? q(offset + limit) : null, prev: offset > 0 ? q(Math.max(0, offset - limit)) : null});
+      }
       return res(200, {items: list, count: list.length});
     }
     if (method === "POST"){
@@ -441,18 +486,25 @@ function handle(method, rawPath, headers, bodyText){
   const o = db.orders.get(id);
   if (method === "POST"){ complete("r-405"); return Object.assign(err(405, "POST на конкретный заказ не поддерживается"), {headers:{"Content-Type":"application/json","Allow":"GET, PUT, PATCH, DELETE"}}); }
   if (!o){ complete("r-404"); if (method === "DELETE" && deleted.has(id)) complete("r-del"); return err(404, `заказ ${id} не найден`); }
-  if (method === "GET") return res(200, o);
+  if (method === "GET"){
+    if (headers["if-none-match"] === etag(id)){ complete("r-304"); return {status:304, body:null, headers:{"ETag": etag(id)}}; }
+    return res(200, o, {"ETag": etag(id)});
+  }
   if (method === "PUT" || method === "PATCH"){
+    if (headers["if-match"] && headers["if-match"] !== etag(id)){
+      complete("r-412"); return err(412, "ресурс изменился после вашего чтения", {current_etag: etag(id)});
+    }
     const errors = validate(body, method === "PATCH");
-    if (errors.length){ complete("r-400"); return err(400, "ошибка валидации", {details: errors}); }
+    if (errors.length){ complete(method === "PUT" ? "r-put" : "r-400"); return err(400, "ошибка валидации", {details: errors}); }
     if (body.status === "cancelled" && (o.status === "paid" || o.status === "shipped")){
       complete("r-409"); return err(409, `нельзя отменить заказ в статусе «${o.status}»`);
     }
     const next = method === "PUT" ? {id, item: body.item.trim(), qty: body.qty, status: body.status || "new"} : Object.assign({}, o, body, {id});
     db.orders.set(id, next);
+    db.ver.set(id, (db.ver.get(id) || 1) + 1);
     if (method === "PATCH") complete("r-patch");
     publishFromRest(method === "PUT" ? "OrderReplaced" : "OrderUpdated", next);
-    return res(200, next);
+    return res(200, next, {"ETag": etag(id)});
   }
   if (method === "DELETE"){
     db.orders.delete(id); deleted.add(id);
@@ -462,7 +514,7 @@ function handle(method, rawPath, headers, bodyText){
   return err(405, "метод не поддерживается");
 }
 const deleted = new Set();
-const REASON = {200:"OK",201:"Created",204:"No Content",400:"Bad Request",401:"Unauthorized",404:"Not Found",405:"Method Not Allowed",409:"Conflict"};
+const REASON = {200:"OK",201:"Created",204:"No Content",304:"Not Modified",400:"Bad Request",401:"Unauthorized",404:"Not Found",405:"Method Not Allowed",409:"Conflict",412:"Precondition Failed"};
 
 function parseHeaders(text){
   const h = {};
@@ -494,7 +546,10 @@ const PRESETS = {
   patch: ["PATCH","/orders/2","Content-Type: application/json",'{ "status": "paid" }'],
   put:   ["PUT","/orders/2","Content-Type: application/json",'{ "item": "Мышь беспроводная", "qty": 1, "status": "paid" }'],
   del:   ["DELETE","/orders/3","Content-Type: application/json",""],
-  idem:  ["POST","/orders","Content-Type: application/json\nIdempotency-Key: 7f3c-pay-001",'{ "item": "Наушники", "qty": 1 }']
+  idem:  ["POST","/orders","Content-Type: application/json\nIdempotency-Key: 7f3c-pay-001",'{ "item": "Наушники", "qty": 1 }'],
+  page:  ["GET","/orders?limit=2&offset=0","Content-Type: application/json",""],
+  etag:  ["GET","/orders/2","Content-Type: application/json\nIf-None-Match: \"2-v1\"",""],
+  ifm:   ["PATCH","/orders/2","Content-Type: application/json\nIf-Match: \"2-v1\"",'{ "qty": 3 }']
 };
 document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => {
   const [m,p,h,bd] = PRESETS[b.dataset.preset];
@@ -503,7 +558,7 @@ document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("clic
 }));
 
 /* ================= KAFKA ================= */
-const K = { parts: 3, log: [], rr: 0, groups: [] };
+const K = { parts: 3, log: [], rr: 0, groups: [], keyParts: new Map(), lifecycle: new Map() };
 function hash(s){ let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
 function newGroup(name, n){
   const g = { name, committed: [], consumers: [], autoCommit: true, seen: new Map(), log: [], cid: 0 };
@@ -534,13 +589,22 @@ function produce(key, value){
   if (key){
     const same = K.log.flat().filter(m => m.key === key);
     if (same.length >= 3) complete("k-key");
+    const seen = K.keyParts.get(key) || new Map(); seen.set(K.parts, p); K.keyParts.set(key, seen);
+    if (new Set(seen.values()).size >= 2) complete("k-repart");
+  } else {
+    const keyless = [];
+    K.log.forEach((pl, i) => pl.forEach(m => { if (m.key == null) keyless.push(i); }));
+    if (keyless.length >= 3 && new Set(keyless).size >= 2) complete("k-rr");
   }
+  for (const g of K.groups) if (!g.consumers.length && lag(g).reduce((a,b) => a+b, 0) >= 5) complete("k-nocons");
   render();
   return { p, off };
 }
 function publishFromRest(type, order){
   produce("order-" + order.id, JSON.stringify({ event: type, ...order }));
   complete("k-bridge");
+  const lc = K.lifecycle.get(order.id) || new Set(); lc.add(type); K.lifecycle.set(order.id, lc);
+  if (lc.has("OrderCreated") && (lc.has("OrderUpdated") || lc.has("OrderReplaced")) && lc.has("OrderDeleted")) complete("k-order");
 }
 function lag(g){ return K.log.map((pl, p) => pl.length - g.committed[p]); }
 function poll(g){
@@ -621,7 +685,9 @@ function renderGroups(){
       mk("poll", () => poll(g), "primary"),
       mk("commit", () => commit(g)),
       mk("+ консьюмер", () => { g.consumers.push({id: ++g.cid, pos:{}}); rebalance(g); if (g.consumers.length > K.parts) complete("k-idle"); g.log.unshift({text:"ребалансировка: консьюмер добавлен", dup:false}); render(); }),
-      mk("уронить консьюмера", () => { if (!g.consumers.length) return; const c = g.consumers.pop(); g.log.unshift({text:`c${c.id} упал без коммита → ребалансировка, чтение с последнего коммита`, dup:false}); rebalance(g); render(); }, "danger"),
+      mk("уронить консьюмера", () => { if (!g.consumers.length) return; const c = g.consumers.pop();
+        const ps = Object.entries(c.pos);
+        if (!g.autoCommit && g.seen.size > 0 && ps.every(([p, pos]) => g.committed[p] >= pos)) complete("k-safe"); g.log.unshift({text:`c${c.id} упал без коммита → ребалансировка, чтение с последнего коммита`, dup:false}); rebalance(g); render(); }, "danger"),
       mk("reset offsets", () => { g.committed = Array(K.parts).fill(0); rebalance(g); complete("k-replay"); g.log.unshift({text:"offset’ы сброшены в начало (--to-earliest)", dup:false}); render(); })
     );
     wrap.append(ctr);
@@ -667,6 +733,8 @@ const QUIZ = [
   ["Нужно, чтобы события одного заказа обрабатывались строго по порядку. Что делать?", ["Отправлять с ключом = id заказа","Сделать 1 консьюмер на всё","Включить автокоммит"], 0, "Одинаковый ключ → одна партиция → порядок сохраняется."],
   ["Консьюмер обработал сообщение и упал до коммита. Что произойдёт?", ["Сообщение потеряется","После ребалансировки его обработают повторно","Kafka удалит сообщение"], 1, "Это at-least-once. Обработчик должен быть идемпотентным."],
   ["Сервис пишет заказ в БД, а потом шлёт событие в Kafka. В чём риск?", ["Его нет","Падение между шагами рассинхронизирует БД и топик — нужен outbox","Kafka не принимает JSON"], 1, "Это проблема dual write. Transactional outbox кладёт событие в БД в той же транзакции."],
+  ["Двое открыли заказ и одновременно правят его. Как не затереть чужую правку?", ["Отправлять PUT вместо PATCH","Передавать If-Match с ETag и получать 412 при конфликте","Повторять запрос до успеха"], 1, "Это оптимистичная блокировка: сервер принимает правку, только если версия не изменилась с момента чтения."],
+  ["Топик вырос, и вы увеличили число партиций с 3 до 6. Что сломается?", ["Ничего","Ключи начнут попадать в другие партиции, и порядок по ключу нарушится на стыке","Удалятся старые сообщения"], 1, "Партиция = hash(key) % N. При новом N новые события заказа могут уйти в другую партицию, чем старые."],
   ["Сервис уведомлений хочет перечитать события за вчера. Это возможно?", ["Нет, прочитанное удаляется","Да, сдвинув offset’ы группы, пока данные в пределах retention","Только через REST"], 1, "Kafka — журнал: сообщения хранятся до истечения retention независимо от чтения."]
 ];
 function renderQuiz(){
@@ -689,6 +757,11 @@ function renderQuiz(){
 /* ================= BOOT ================= */
 resetTopic(3);
 ["order-1","order-2","order-3","order-4"].forEach(k => produce(k, JSON.stringify({event: "created"})));
+let armed = false;
+$("#resetProgress").addEventListener("click", () => {
+  if (!armed){ armed = true; $("#resetNote").textContent = "Нажмите ещё раз, чтобы подтвердить."; setTimeout(() => { armed = false; $("#resetNote").textContent = ""; }, 4000); return; }
+  armed = false; done.clear(); store.set("rk-done", []); $("#resetNote").textContent = "Прогресс сброшен."; renderQuests();
+});
 render(); renderQuests(); renderQuiz();
 })();
 </script>
