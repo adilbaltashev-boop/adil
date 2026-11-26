@@ -2,6 +2,7 @@
 -- Выполняй блоками по порядку и сравнивай планы «до» и «после».
 -- EXPLAIN ANALYZE реально выполняет запрос — с INSERT/UPDATE/DELETE используй его внутри BEGIN … ROLLBACK.
 SET search_path TO credit;
+SET TIME ZONE 'Asia/Almaty';  -- данные и даты не должны зависеть от пояса клиента (DBeaver берёт пояс компьютера)
 
 -- ---------------------------------------------------------------------
 -- 0. Готовим большую таблицу: ~1 млн платежей (≈ 13 копий реальных).
@@ -62,7 +63,18 @@ EXPLAIN ANALYZE
 SELECT id, client_id, created_at FROM loan_applications
 WHERE status = 'scoring' ORDER BY created_at LIMIT 20;
 
--- Запрос только по created_at этим индексом эффективно не воспользуется — created_at второй в индексе
+-- Обратный порядок колонок: для этого запроса хуже — индекс отсортирован по времени,
+-- и строки со статусом 'scoring' приходится выискивать среди всех заявок
+DROP INDEX ix_applications_status_created;
+CREATE INDEX ix_applications_created_status ON loan_applications (created_at, status);
+EXPLAIN ANALYZE
+SELECT id, client_id, created_at FROM loan_applications
+WHERE status = 'scoring' ORDER BY created_at LIMIT 20;
+DROP INDEX ix_applications_created_status;
+CREATE INDEX ix_applications_status_created ON loan_applications (status, created_at);
+
+-- Запрос только по created_at не может точечно войти в индекс (status, created_at): created_at второй.
+-- До PostgreSQL 17 он в лучшем случае читает индекс целиком; в PG18 появился skip scan, который это частично обходит.
 EXPLAIN SELECT count(*) FROM loan_applications WHERE created_at >= timestamptz '2026-11-01 00:00+05';
 
 -- ---------------------------------------------------------------------
@@ -70,7 +82,10 @@ EXPLAIN SELECT count(*) FROM loan_applications WHERE created_at >= timestamptz '
 -- ---------------------------------------------------------------------
 CREATE INDEX ix_loans_problem ON loans (issued_on) WHERE status IN ('overdue', 'written_off');
 EXPLAIN ANALYZE SELECT * FROM loans WHERE status IN ('overdue', 'written_off') ORDER BY issued_on;
-SELECT pg_size_pretty(pg_relation_size('ix_loans_problem')) AS partial_index_size;
+CREATE INDEX ix_loans_issued_full ON loans (issued_on);
+SELECT pg_size_pretty(pg_relation_size('ix_loans_problem'))    AS partial_index_size,
+       pg_size_pretty(pg_relation_size('ix_loans_issued_full')) AS full_index_size;
+DROP INDEX ix_loans_issued_full;
 
 -- ---------------------------------------------------------------------
 -- 5. Когда индекс НЕ помогает: низкая селективность.

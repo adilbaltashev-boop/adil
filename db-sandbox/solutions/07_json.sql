@@ -1,5 +1,6 @@
 -- Урок 07. Маппинг данных: БД и JSON — решения.
 SET search_path TO credit;
+SET TIME ZONE 'Asia/Almaty';  -- данные и даты не должны зависеть от пояса клиента (DBeaver берёт пояс компьютера)
 
 -- ---------------------------------------------------------------------
 -- A. Читаем JSON, который пришёл извне (ответы кредитных бюро)
@@ -21,11 +22,13 @@ FROM credit_bureau_checks
 WHERE bureau = 'PKB'
 LIMIT 10;
 
--- A3. Заявки, по которым бюро показало просрочку больше 30 дней
-SELECT a.id, a.status, (b.response ->> 'overdue_days_max')::int AS overdue_days_max
+-- A3. Заявки, по которым бюро показало просрочку больше 30 дней.
+-- По одной заявке бывает два ответа (ПКБ и ГКБ) — группируем, иначе заявка выведется дважды.
+SELECT a.id, a.status, max((b.response ->> 'overdue_days_max')::int) AS overdue_days_max
 FROM credit_bureau_checks b
 JOIN loan_applications a ON a.id = b.application_id
-WHERE (b.response ->> 'overdue_days_max')::int > 30
+GROUP BY a.id, a.status
+HAVING max((b.response ->> 'overdue_days_max')::int) > 30
 ORDER BY overdue_days_max DESC
 LIMIT 20;
 
@@ -108,16 +111,19 @@ WHERE c.id = 5;
 
 -- B2. Обратная задача: разобрать входящий JSON заявки из мобильного приложения в строку таблицы
 -- (так аналитик проверяет, что все поля запроса ложатся в колонки).
--- ИИН здесь — клиента с id = 5; поменяй его на несуществующий и посмотри, что вернётся.
+-- Поменяй ИИН на несуществующий (например, '000000000000') и посмотри, что вернётся.
 WITH request AS (
-    SELECT '{
-        "clientIin": "610401400053",
-        "productCode": "MICRO_IP",
-        "amount": 1500000,
-        "termMonths": 24,
-        "purpose": "Покупка оборудования",
-        "channel": "MOBILE_APP"
-    }'::jsonb AS body
+    -- так выглядит тело запроса:
+    -- {"clientIin": "<ИИН>", "productCode": "MICRO_IP", "amount": 1500000,
+    --  "termMonths": 24, "purpose": "Покупка оборудования", "channel": "MOBILE_APP"}
+    -- ИИН берём у клиента id = 5, чтобы пример работал на любой версии PostgreSQL
+    SELECT jsonb_build_object(
+               'clientIin',   (SELECT iin FROM clients WHERE id = 5),
+               'productCode', 'MICRO_IP',
+               'amount',      1500000,
+               'termMonths',  24,
+               'purpose',     'Покупка оборудования',
+               'channel',     'MOBILE_APP') AS body
 )
 SELECT c.id                         AS client_id,
        p.id                         AS product_id,

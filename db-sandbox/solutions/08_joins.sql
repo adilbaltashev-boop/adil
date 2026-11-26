@@ -1,5 +1,6 @@
 -- Урок 08. JOIN — решения.
 SET search_path TO credit;
+SET TIME ZONE 'Asia/Almaty';  -- данные и даты не должны зависеть от пояса клиента (DBeaver берёт пояс компьютера)
 
 -- 1. INNER JOIN: заявки с ФИО клиента и названием продукта
 SELECT a.id, c.last_name || ' ' || c.first_name AS client, p.name AS product,

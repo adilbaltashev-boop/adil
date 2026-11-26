@@ -46,7 +46,8 @@ Outbox relay ──событие PaymentReceived──▶ Kafka ──▶ Loan 
                                                  └─▶ Notification Service: SMS клиенту
 ```
 
-В скрипте этот сценарий выполняется внутри `BEGIN … ROLLBACK`, данные не меняются.
+В скрипте этот сценарий выполняется внутри `BEGIN … ROLLBACK`, данные не меняются. Если скрипт
+остановился на ошибке до `ROLLBACK`, выполни `ROLLBACK;` вручную.
 
 ## Задания
 

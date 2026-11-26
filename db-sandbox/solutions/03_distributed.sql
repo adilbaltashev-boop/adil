@@ -4,6 +4,8 @@
 -- Правило: сервис читает и пишет только свою схему. Между сервисами нет FOREIGN KEY —
 -- ссылки хранятся как «внешний id», а данные другого сервиса получают через API или события.
 
+SET TIME ZONE 'Asia/Almaty';
+
 DROP SCHEMA IF EXISTS svc_client, svc_origination, svc_loan, svc_payment CASCADE;
 
 -- ---------------------------------------------------------------------

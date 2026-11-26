@@ -1,6 +1,7 @@
 -- Урок 05. DBeaver и базовый SQL — решения.
 -- Выполнять по одному запросу: поставь курсор внутрь запроса и нажми Ctrl+Enter (⌘+Enter).
 SET search_path TO credit;
+SET TIME ZONE 'Asia/Almaty';  -- данные и даты не должны зависеть от пояса клиента (DBeaver берёт пояс компьютера)
 
 -- 1. Все продукты по возрастанию ставки
 SELECT code, name, annual_rate, min_amount, max_amount

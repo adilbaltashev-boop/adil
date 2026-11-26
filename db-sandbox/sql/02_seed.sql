@@ -6,6 +6,7 @@
 -- =====================================================================
 
 SET search_path TO credit;
+SET TIME ZONE 'Asia/Almaty';  -- данные и даты не должны зависеть от пояса клиента (DBeaver берёт пояс компьютера)
 SELECT setseed(0.42);
 
 -- ---------------------------------------------------------------------
@@ -251,7 +252,9 @@ INSERT INTO loans
      issued_on, maturity_date, status)
 SELECT a.id,
        'CR-' || to_char(a.decided_at + interval '1 day', 'YYYY') || '-' || lpad(a.id::text, 6, '0'),
-       CASE WHEN random() < 0.15 THEN round(a.requested_amount * 0.7, -4) ELSE a.requested_amount END,
+       -- иногда одобряют меньше запрошенного, но не ниже минимума продукта
+       CASE WHEN random() < 0.15 THEN greatest(p.min_amount, round(a.requested_amount * 0.7, -4))
+            ELSE a.requested_amount END,
        p.annual_rate - CASE WHEN a.score >= 750 THEN 2 ELSE 0 END,
        a.requested_term_months,
        (a.decided_at + interval '1 day')::date,
@@ -319,16 +322,16 @@ ORDER BY p.paid_at;
 -- Статусы кредитов по факту платежей
 UPDATE loans l
 SET status = CASE
-        WHEN u.oldest_unpaid IS NULL AND l.maturity_date <= sandbox_today() THEN 'closed'
-        WHEN u.oldest_unpaid IS NULL THEN 'active'
+        WHEN u.unpaid_rows = 0 THEN 'closed'                 -- оплачены все строки графика
+        WHEN u.oldest_unpaid IS NULL THEN 'active'          -- долг есть, но срок ещё не наступил
         WHEN u.oldest_unpaid < sandbox_today() - 180 THEN 'written_off'
         ELSE 'overdue'
     END,
-    closed_on = CASE WHEN u.oldest_unpaid IS NULL AND l.maturity_date <= sandbox_today()
-                     THEN u.last_paid END
+    closed_on = CASE WHEN u.unpaid_rows = 0 THEN u.last_paid END
 FROM (
     SELECT s.loan_id,
            min(s.due_date) FILTER (WHERE p.id IS NULL AND s.due_date < sandbox_today()) AS oldest_unpaid,
+           count(*) FILTER (WHERE p.id IS NULL) AS unpaid_rows,
            max(p.paid_at)::date AS last_paid
     FROM repayment_schedule s
     LEFT JOIN payments p ON p.loan_id = s.loan_id AND p.installment_no = s.installment_no

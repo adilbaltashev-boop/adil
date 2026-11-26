@@ -5,6 +5,7 @@
 -- =====================================================================
 
 SET search_path TO credit;
+SET TIME ZONE 'Asia/Almaty';  -- данные и даты не должны зависеть от пояса клиента (DBeaver берёт пояс компьютера)
 
 DO $$
 DECLARE
@@ -50,6 +51,22 @@ BEGIN
           LEFT JOIN payments p ON p.loan_id = s.loan_id AND p.installment_no = s.installment_no
           WHERE s.loan_id = l.id AND s.due_date < sandbox_today() AND p.id IS NULL);
     IF n > 0 THEN RAISE EXCEPTION 'ПРОВЕРКА НЕ ПРОЙДЕНА: % кредитов в просрочке без долга', n; END IF;
+    -- 6б. «Закрыт» — только когда оплачены все строки графика
+    SELECT count(*) INTO n
+    FROM loans l
+    WHERE l.status = 'closed'
+      AND EXISTS (
+          SELECT 1 FROM repayment_schedule s
+          LEFT JOIN payments p ON p.loan_id = s.loan_id AND p.installment_no = s.installment_no
+          WHERE s.loan_id = l.id AND p.id IS NULL);
+    IF n > 0 THEN RAISE EXCEPTION 'ПРОВЕРКА НЕ ПРОЙДЕНА: % закрытых кредитов с неоплаченным графиком', n; END IF;
+    -- 6в. Сумма кредита не ниже минимума продукта
+    SELECT count(*) INTO n
+    FROM loans l
+    JOIN loan_applications a ON a.id = l.application_id
+    JOIN loan_products p ON p.id = a.product_id
+    WHERE l.principal < p.min_amount OR l.principal > a.requested_amount;
+    IF n > 0 THEN RAISE EXCEPTION 'ПРОВЕРКА НЕ ПРОЙДЕНА: % кредитов с суммой вне правил', n; END IF;
     -- 7. Продукт подходит типу клиента; «женский» продукт — только женщинам
     SELECT count(*) INTO n
     FROM loan_applications a

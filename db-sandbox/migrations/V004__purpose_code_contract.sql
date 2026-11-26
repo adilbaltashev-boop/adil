@@ -10,7 +10,12 @@ BEGIN
     END IF;
 END $$;
 
+-- SET NOT NULL сканирует всю таблицу под эксклюзивной блокировкой. На большой таблице безопаснее так:
+-- CHECK … NOT VALID (мгновенно) → VALIDATE (без блокировки записи) → SET NOT NULL (PG12+ использует проверенный CHECK и не сканирует).
+ALTER TABLE loan_applications ADD CONSTRAINT ck_purpose_code_nn CHECK (purpose_code IS NOT NULL) NOT VALID;
+ALTER TABLE loan_applications VALIDATE CONSTRAINT ck_purpose_code_nn;
 ALTER TABLE loan_applications ALTER COLUMN purpose_code SET NOT NULL;
+ALTER TABLE loan_applications DROP CONSTRAINT ck_purpose_code_nn;
 DROP TRIGGER sync_purpose ON loan_applications;
 DROP FUNCTION trg_sync_purpose();
 ALTER TABLE loan_applications DROP COLUMN purpose;     -- необратимо без справочника!
